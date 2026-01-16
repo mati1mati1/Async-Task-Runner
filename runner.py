@@ -4,6 +4,7 @@ import asyncio
 from typing import Dict, List, Optional, Tuple
 from xmlrpc.client import DateTime
 
+from exceptions import TaskCanceledError, TaskFailed, TaskTimeoutError
 from models import SubmitPolicy, TaskHandle, TaskRecord, TaskStatus
 from task import BaseTask
 
@@ -142,6 +143,10 @@ class TaskRunner:
                     
             except asyncio.TimeoutError:
                 running_task.cancel()
+                try:
+                    await running_task
+                except asyncio.CancelledError:
+                    pass
                 async with self._records_lock:
                     record.status = TaskStatus.FAILED
                     record.error = "timeout"
@@ -151,6 +156,10 @@ class TaskRunner:
                     record.status = TaskStatus.CANCELED
                     record.updated_at = DateTime()
                     record.error = "cancelled"
+                try:
+                    await running_task
+                except asyncio.CancelledError:
+                    pass
                 raise
             except Exception as e:
                 async with self._records_lock:
@@ -164,15 +173,19 @@ class TaskRunner:
 
                 async with self._futures_lock:
                     fut = self._futures.get(task_id)
-                    
-                    if fut and not fut.done():
-                        if record.status == TaskStatus.DONE:
-                            fut.set_result(record.result)
-                        elif record.status == TaskStatus.CANCELED:
-                            fut.cancel()
-                        else:
-                            fut.set_exception(RuntimeError(record.error or "failed"))
 
+                if fut and not fut.done():
+                    if record.status == TaskStatus.DONE:
+                        fut.set_result(record.result)
+
+                    elif record.status == TaskStatus.CANCELED:
+                        fut.set_exception(TaskCanceledError(task_id))
+
+                    elif record.error == "timeout":
+                        fut.set_exception(TaskTimeoutError(task_id))
+
+                    else:
+                        fut.set_exception(TaskFailed(task_id, record.error))
 
 
     async def wait(self, task_id: int) -> str:

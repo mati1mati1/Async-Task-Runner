@@ -4,6 +4,7 @@ import asyncio
 from models import SubmitPolicy, TaskStatus
 from runner import TaskRunner
 from task import HashTask, SleepTask
+from exceptions import TaskError
 
 
 async def main():
@@ -30,7 +31,12 @@ async def submit_tasks(runner: TaskRunner):
 async def create_and_run_future(runner: TaskRunner):
     handles = await submit_tasks(runner)
     results = await asyncio.gather(*handles, return_exceptions=True)
-    print(results)
+
+    for r in results:
+        if isinstance(r, TaskError):
+            print("error:", r)
+        else:
+            print("ok:", r)
 
 async def create_and_run_polling(runner: TaskRunner):
     ids = await submit_tasks(runner)
