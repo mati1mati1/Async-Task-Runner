@@ -15,6 +15,10 @@ class TaskType(enum.Enum):
     HASH = "hash"
     SLEEP = "sleep"
 
+class SubmitPolicy(enum.Enum):
+    REJECT = "reject"
+    WAIT = "wait"
+
 @dataclass(slots=True)
 class TaskRecord:
     id: int

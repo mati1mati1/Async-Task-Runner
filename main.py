@@ -1,20 +1,32 @@
 
 
 import asyncio
-from models import TaskStatus
+from models import SubmitPolicy, TaskStatus
 from runner import TaskRunner
 from task import HashTask, SleepTask
 
 
 async def main():
-    runner = TaskRunner(num_workers=5)
+    runner = TaskRunner(num_workers=5, max_queue_size=10, submit_policy=SubmitPolicy.WAIT)
     await runner.start()
+    for i in range(5):
+        print(await runner.stats())
+        await create_and_run(runner)
+    await runner.shutdown()
 
+async def create_and_run(runner: TaskRunner):
+    
     ids = []
     for i in range(10):
-        ids.append(await runner.submit(SleepTask(ms=500 + i * 100)))
+        try:
+            ids.append(await runner.submit(SleepTask(ms=500 + i * 100)))
+        except asyncio.QueueFull:
+            print(f"Failed to submit SleepTask {i}: queue is full")
     for i in range(10):
-        ids.append(await runner.submit(HashTask(text=f"Task number {i}")))
+        try:
+            ids.append(await runner.submit(HashTask(text=f"Task number {i}")))
+        except asyncio.QueueFull:
+            print(f"Failed to submit HashTask {i}: queue is full")
 
     while True:
         done = 0
@@ -36,7 +48,7 @@ async def main():
             if record:
                 print(record)
 
-    await runner.shutdown()
+    print(await runner.stats())
 
 if __name__ == "__main__":
     asyncio.run(main())
