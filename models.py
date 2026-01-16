@@ -1,7 +1,10 @@
 import enum
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from xmlrpc.client import DateTime
+
+if TYPE_CHECKING:
+    from runner import TaskRunner
 
 
 class TaskStatus(enum.Enum):
@@ -42,3 +45,17 @@ class TaskRecord:
             f"result={self.result}, "
             f"error={self.error})"
         )
+    
+@dataclass(frozen=True)
+class TaskHandle:
+    id: int
+    runner: "TaskRunner"
+
+    def __await__(self):
+        return self.runner.wait(self.id).__await__()
+
+    async def cancel(self) -> bool:
+        return await self.runner.cancel(self.id)
+
+    async def record(self):
+        return await self.runner.get_record(self.id)

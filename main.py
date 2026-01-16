@@ -9,25 +9,31 @@ from task import HashTask, SleepTask
 async def main():
     runner = TaskRunner(num_workers=5, max_queue_size=10, submit_policy=SubmitPolicy.WAIT)
     await runner.start()
-    for i in range(5):
-        print(await runner.stats())
-        await create_and_run(runner)
+    await create_and_run_future(runner)
     await runner.shutdown()
 
-async def create_and_run(runner: TaskRunner):
-    
-    ids = []
+
+async def submit_tasks(runner: TaskRunner):
+    handles = []
     for i in range(10):
         try:
-            ids.append(await runner.submit(SleepTask(ms=500 + i * 100)))
+            handles.append(await runner.submit(SleepTask(ms=500 + i * 100)))
         except asyncio.QueueFull:
             print(f"Failed to submit SleepTask {i}: queue is full")
     for i in range(10):
         try:
-            ids.append(await runner.submit(HashTask(text=f"Task number {i}")))
+            handles.append(await runner.submit(HashTask(text=f"Task number {i}")))
         except asyncio.QueueFull:
             print(f"Failed to submit HashTask {i}: queue is full")
+    return handles
 
+async def create_and_run_future(runner: TaskRunner):
+    handles = await submit_tasks(runner)
+    results = await asyncio.gather(*handles, return_exceptions=True)
+    print(results)
+
+async def create_and_run_polling(runner: TaskRunner):
+    ids = await submit_tasks(runner)
     while True:
         done = 0
         for task_id in ids:

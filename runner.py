@@ -1,11 +1,10 @@
 
 
-from ast import Dict, List, Tuple
 import asyncio
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 from xmlrpc.client import DateTime
 
-from models import SubmitPolicy, SubmitPolicy, TaskRecord, TaskStatus
+from models import SubmitPolicy, TaskHandle, TaskRecord, TaskStatus
 from task import BaseTask
 
 
@@ -26,6 +25,10 @@ class TaskRunner:
 
         self._worker_tasks: List[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
+
+        self._futures: dict[int, asyncio.Future[str]] = {}
+        self._futures_lock = asyncio.Lock()
+
     
     async def start(self) -> None:
         for worker_id in range(self.num_workers):
@@ -33,24 +36,31 @@ class TaskRunner:
             self._worker_tasks.append(worker_task)
 
 
-    async def submit(self, task: BaseTask) -> Optional[int]:
+    async def submit(self, task: BaseTask) -> Optional[TaskHandle]:
         recored_id = await self._allocate_id()
         record = TaskRecord(id=recored_id, name=task.name, type=task.type, created_at=DateTime(), updated_at=DateTime())
+        
         async with self._records_lock:
             self._records[recored_id] = record
+        
+        fut = asyncio.get_running_loop().create_future()
+        async with self._futures_lock:
+            self._futures[recored_id] = fut
+
 
         try:
             self.queue.put_nowait((recored_id, task))
-            return recored_id
         except asyncio.QueueFull:
             if self.submit_policy == SubmitPolicy.REJECT:
                 async with self._records_lock:
                     self._records.pop(recored_id, None)
+                async with self._futures_lock:
+                    self._futures.pop(recored_id, None)
                 raise
             elif self.submit_policy == SubmitPolicy.WAIT:
                 await self.queue.put((recored_id, task))
-                return recored_id
-    
+
+        return TaskHandle(id=recored_id, runner=self)
     
     
     async def _allocate_id(self) -> int:
@@ -64,6 +74,11 @@ class TaskRunner:
             return self._records.get(task_id)
         
     async def cancel(self, task_id: int) -> bool:
+        async with self._futures_lock:
+            fut = self._futures.get(task_id)
+            if fut and not fut.done():
+                fut.cancel()
+
         async with self._running_lock:
             running_task = self._running.get(task_id)
             if running_task:
@@ -146,6 +161,31 @@ class TaskRunner:
                 self.queue.task_done()
                 async with self._running_lock:
                     self._running.pop(task_id, None)
+
+                async with self._futures_lock:
+                    fut = self._futures.get(task_id)
+                    
+                    if fut and not fut.done():
+                        if record.status == TaskStatus.DONE:
+                            fut.set_result(record.result)
+                        elif record.status == TaskStatus.CANCELED:
+                            fut.cancel()
+                        else:
+                            fut.set_exception(RuntimeError(record.error or "failed"))
+
+
+
+    async def wait(self, task_id: int) -> str:
+        async with self._futures_lock:
+            fut = self._futures.get(task_id)
+        if not fut:
+            raise KeyError(f"task {task_id} not found")
+
+        try:
+            return await fut
+        finally:
+            async with self._futures_lock:
+                self._futures.pop(task_id, None)
 
     async def stats(self) -> dict:
         async with self._records_lock:
