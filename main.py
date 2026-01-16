@@ -24,7 +24,7 @@ async def main():
                 continue
             if record and record.status in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELED}:
                 done += 1
-                print(f"Task {task_id} - Status: {record.status}, Result: {record.result}, Error: {record.error}")
+            print(f"Task {task_id} - Status: {record.status}, Result: {record.result}, Error: {record.error}")
         
         print(f"Completed {done}/{len(ids)} tasks.")
         if done == len(ids):
